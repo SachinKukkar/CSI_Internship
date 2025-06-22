@@ -1,63 +1,81 @@
 import pandas as pd
 import numpy as np
+from sklearn.datasets import fetch_openml
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+from math import sqrt
 
-# Load datasets
-train = pd.read_csv('train.csv')
-test = pd.read_csv('test.csv')
+# 📥 Load dataset from OpenML
+print("Loading dataset...")
+data = fetch_openml(name='house_prices', as_frame=True)
+df = data.frame.copy()
 
-# Save SalePrice and drop it from train for preprocessing
-train_labels = train['SalePrice']
-train.drop(['SalePrice'], axis=1, inplace=True)
+# 🎯 Separate features and target
+y = df['SalePrice']
+X = df.drop('SalePrice', axis=1)
 
-# Combine train and test for consistent preprocessing
-combined = pd.concat([train, test], sort=False).reset_index(drop=True)
-
-# Drop columns with too many missing values
+# ❌ Drop columns with too many missing values
 drop_cols = ['Alley', 'PoolQC', 'Fence', 'MiscFeature', 'FireplaceQu']
-combined.drop(columns=drop_cols, inplace=True)
+X.drop(columns=[col for col in drop_cols if col in X.columns], inplace=True)
 
-# Fill missing values
-for col in combined.columns:
-    if combined[col].dtype == 'object':
-        combined[col] = combined[col].fillna(combined[col].mode()[0])
+# 🧼 Fill missing values
+for col in X.columns:
+    if X[col].dtype == 'object':
+        X[col].fillna(X[col].mode()[0], inplace=True)
     else:
-        combined[col] = combined[col].fillna(combined[col].median())
+        X[col].fillna(X[col].median(), inplace=True)
 
-# Feature Engineering
-combined['TotalSF'] = combined['TotalBsmtSF'] + combined['1stFlrSF'] + combined['2ndFlrSF']
-combined['TotalBath'] = (combined['FullBath'] + 0.5 * combined['HalfBath'] +
-                         combined['BsmtFullBath'] + 0.5 * combined['BsmtHalfBath'])
-combined['HouseAge'] = combined['YrSold'] - combined['YearBuilt']
-combined['SinceRemodel'] = combined['YrSold'] - combined['YearRemodAdd']
-combined['IsRemodeled'] = (combined['YearBuilt'] != combined['YearRemodAdd']).astype(int)
-combined['HasGarage'] = combined['GarageArea'].apply(lambda x: 1 if x > 0 else 0)
+# ⚙️ Feature Engineering
+X['TotalSF'] = X['TotalBsmtSF'] + X['1stFlrSF'] + X['2ndFlrSF']
+X['TotalBath'] = (X['FullBath'] + 0.5 * X['HalfBath'] +
+                  X['BsmtFullBath'] + 0.5 * X['BsmtHalfBath'])
+X['HouseAge'] = X['YrSold'] - X['YearBuilt']
+X['SinceRemodel'] = X['YrSold'] - X['YearRemodAdd']
+X['IsRemodeled'] = (X['YearBuilt'] != X['YearRemodAdd']).astype(int)
+X['HasGarage'] = X['GarageArea'].apply(lambda x: 1 if x > 0 else 0)
 
-# Label Encoding for ordinal variables
-ordinal_cols = ['ExterQual', 'ExterCond', 'BsmtQual', 'BsmtCond', 'HeatingQC', 'KitchenQual',
-                'GarageQual', 'GarageCond']
-label_enc = LabelEncoder()
+# 🔠 Label Encode ordinal categorical variables
+ordinal_cols = ['ExterQual', 'ExterCond', 'BsmtQual', 'BsmtCond',
+                'HeatingQC', 'KitchenQual', 'GarageQual', 'GarageCond']
+
+le = LabelEncoder()
 for col in ordinal_cols:
-    if col in combined.columns:
-        combined[col] = label_enc.fit_transform(combined[col])
+    if col in X.columns:
+        X[col] = le.fit_transform(X[col])
 
-# One-hot encode remaining categorical variables
-combined = pd.get_dummies(combined, drop_first=True)
+# 🧠 One-hot encode other categorical variables
+X = pd.get_dummies(X, drop_first=True)
 
-# Standardize numeric features
-numeric_feats = combined.select_dtypes(include=[np.number]).columns
+# 📏 Standardize numeric features
+numeric_cols = X.select_dtypes(include=[np.number]).columns
 scaler = StandardScaler()
-combined[numeric_feats] = scaler.fit_transform(combined[numeric_feats])
+X[numeric_cols] = scaler.fit_transform(X[numeric_cols])
 
-# Split back to train and test
-processed_train = combined[:len(train)]
-processed_test = combined[len(train):]
+# ✂️ Train-Test Split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
 
-# Add back target to train set
-processed_train['SalePrice'] = train_labels.values
+# 🤖 Train Models
+print("Training models...")
 
-# Save processed files
-processed_train.to_csv('processed_train.csv', index=False)
-processed_test.to_csv('processed_test.csv', index=False)
+# Linear Regression
+lr_model = LinearRegression()
+lr_model.fit(X_train, y_train)
+lr_preds = lr_model.predict(X_test)
 
-print("✅ Preprocessing complete. Files saved as 'processed_train.csv' and 'processed_test.csv'.")
+# Random Forest Regressor
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_model.fit(X_train, y_train)
+rf_preds = rf_model.predict(X_test)
+
+# 📊 Evaluation
+lr_rmse = sqrt(mean_squared_error(y_test, lr_preds))
+rf_rmse = sqrt(mean_squared_error(y_test, rf_preds))
+
+print(f"\n✅ Model Evaluation Results:")
+print(f"Linear Regression RMSE: {lr_rmse:.2f}")
+print(f"Random Forest RMSE: {rf_rmse:.2f}")
